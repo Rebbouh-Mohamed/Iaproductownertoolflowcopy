@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../AuthContext';
 import { Button } from '../ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Textarea } from '../ui/textarea';
 import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../ui/dropdown-menu';
-import { 
+import {
   Plus, 
   Search, 
   Filter, 
@@ -24,8 +24,11 @@ import {
   Laptop,
   LogOut,
   Settings,
-  User
+  User,
+  Loader2
 } from 'lucide-react';
+import { projectService } from '../../services/projectService';
+import type { Project, ProjectListFilters } from '../../types/project';
 
 const typeIcons = {
   web: Monitor,
@@ -34,18 +37,22 @@ const typeIcons = {
   enterprise: Building
 };
 
-const statusColors = {
-  draft: 'bg-gray-100 text-gray-800',
-  'in-progress': 'bg-blue-100 text-blue-800',
-  completed: 'bg-green-100 text-green-800',
-  archived: 'bg-orange-100 text-orange-800'
+const statusColors: Record<string, string> = {
+  brouillon: 'bg-gray-100 text-gray-800',
+  en_cours: 'bg-blue-100 text-blue-800',
+  termine: 'bg-green-100 text-green-800',
+  archive: 'bg-slate-100 text-slate-800',
+  annule: 'bg-red-100 text-red-800',
+  en_attente: 'bg-amber-100 text-amber-800'
 };
 
 const statusLabels = {
-  draft: 'Brouillon',
-  'in-progress': 'En cours',
-  completed: 'Terminé',
-  archived: 'Archivé'
+  brouillon: 'Brouillon',
+  en_cours: 'En cours',
+  termine: 'Terminé',
+  archive: 'Archivé',
+  annule: 'Annulé',
+  en_attente: 'En attente'
 };
 
 interface ProjectsPageProps {
@@ -53,42 +60,111 @@ interface ProjectsPageProps {
 }
 
 export function ProjectsPage({ onSelectProject }: ProjectsPageProps) {
-  const { user, projects, logout, createProject, selectProject, updateProject, deleteProject } = useAuth();
+  const {
+    user,
+    projects,
+    logout,
+    createProject,
+    selectProject,
+    deleteProject
+  } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [ordering, setOrdering] = useState('default');
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [newProject, setNewProject] = useState({
     name: '',
     description: '',
     type: 'web' as const,
-    status: 'draft' as const
+    status: 'brouillon' as const,
+    startDate: '',
+    endDate: ''
   });
+  const [displayedProjects, setDisplayedProjects] = useState<Project[]>(projects);
+  const [isRemoteLoading, setIsRemoteLoading] = useState(false);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
 
-  const filteredProjects = projects.filter(project => {
-    const matchesSearch = project.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         project.description.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || project.status === statusFilter;
-    const matchesType = typeFilter === 'all' || project.type === typeFilter;
-    
-    return matchesSearch && matchesStatus && matchesType;
-  });
+  const hasActiveFilters = useMemo(() => {
+    return (
+      searchTerm.trim().length > 0 ||
+      statusFilter !== 'all' ||
+      typeFilter !== 'all' ||
+      ordering !== 'default'
+    );
+  }, [searchTerm, statusFilter, typeFilter, ordering]);
 
-  const handleCreateProject = () => {
+  useEffect(() => {
+    if (!hasActiveFilters) {
+      setDisplayedProjects(projects);
+    }
+  }, [projects, hasActiveFilters]);
+
+  useEffect(() => {
+    if (!hasActiveFilters) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(async () => {
+      setIsRemoteLoading(true);
+      setRemoteError(null);
+
+      const filters: ProjectListFilters = {
+        search: searchTerm.trim() || undefined,
+        status: statusFilter !== 'all' ? (statusFilter as Project['status']) : undefined,
+        projectType: typeFilter !== 'all' ? (typeFilter as Project['type']) : undefined,
+        ordering: ordering !== 'default' ? ordering : undefined
+      };
+
+      try {
+        const results = await projectService.list(filters);
+        setDisplayedProjects(results);
+      } catch (error) {
+        console.error('Erreur lors de la récupération des projets filtrés:', error);
+        setRemoteError(
+          error instanceof Error
+            ? error.message
+            : 'Impossible de récupérer les projets avec ces filtres.'
+        );
+      } finally {
+        setIsRemoteLoading(false);
+      }
+    }, 300);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [searchTerm, statusFilter, typeFilter, ordering, hasActiveFilters]);
+
+  const handleCreateProject = async () => {
     if (newProject.name.trim()) {
-      createProject(newProject);
+      await createProject(newProject);
       setNewProject({
         name: '',
         description: '',
         type: 'web',
-        status: 'draft'
+        status: 'brouillon',
+        startDate: '',
+        endDate: ''
       });
       setIsCreateDialogOpen(false);
+
+      if (hasActiveFilters) {
+        try {
+          const results = await projectService.list({
+            search: searchTerm.trim() || undefined,
+            status: statusFilter !== 'all' ? (statusFilter as Project['status']) : undefined,
+            projectType: typeFilter !== 'all' ? (typeFilter as Project['type']) : undefined,
+            ordering: ordering !== 'default' ? ordering : undefined
+          });
+          setDisplayedProjects(results);
+        } catch (error) {
+          console.error('Erreur lors de la mise à jour de la liste des projets:', error);
+        }
+      }
     }
   };
 
-  const handleSelectProject = (projectId: string) => {
-    selectProject(projectId);
+  const handleSelectProject = async (projectId: number | string) => {
+    await selectProject(projectId);
     onSelectProject();
   };
 
@@ -130,7 +206,10 @@ export function ProjectsPage({ onSelectProject }: ProjectsPageProps) {
                     Paramètres
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={logout} className="text-red-600">
+                  <DropdownMenuItem
+                    onClick={() => void logout()}
+                    className="text-red-600"
+                  >
                     <LogOut className="mr-2 h-4 w-4" />
                     Se déconnecter
                   </DropdownMenuItem>
@@ -173,10 +252,12 @@ export function ProjectsPage({ onSelectProject }: ProjectsPageProps) {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Tous les statuts</SelectItem>
-                <SelectItem value="draft">Brouillon</SelectItem>
-                <SelectItem value="in-progress">En cours</SelectItem>
-                <SelectItem value="completed">Terminé</SelectItem>
-                <SelectItem value="archived">Archivé</SelectItem>
+                <SelectItem value="brouillon">Brouillon</SelectItem>
+                <SelectItem value="en_cours">En cours</SelectItem>
+                <SelectItem value="termine">Terminé</SelectItem>
+                <SelectItem value="archive">Archivé</SelectItem>
+                <SelectItem value="annule">Annulé</SelectItem>
+                <SelectItem value="en_attente">En attente</SelectItem>
               </SelectContent>
             </Select>
 
@@ -190,6 +271,21 @@ export function ProjectsPage({ onSelectProject }: ProjectsPageProps) {
                 <SelectItem value="mobile">Mobile</SelectItem>
                 <SelectItem value="desktop">Desktop</SelectItem>
                 <SelectItem value="enterprise">Entreprise</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={ordering} onValueChange={setOrdering}>
+              <SelectTrigger className="w-48">
+                <SelectValue placeholder="Trier par" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">Ordre par défaut</SelectItem>
+                <SelectItem value="-created_at">Créés (du plus récent)</SelectItem>
+                <SelectItem value="created_at">Créés (du plus ancien)</SelectItem>
+                <SelectItem value="-start_date">Début (plus récent)</SelectItem>
+                <SelectItem value="start_date">Début (plus ancien)</SelectItem>
+                <SelectItem value="-end_date">Fin (plus récent)</SelectItem>
+                <SelectItem value="end_date">Fin (plus ancien)</SelectItem>
               </SelectContent>
             </Select>
 
@@ -226,9 +322,38 @@ export function ProjectsPage({ onSelectProject }: ProjectsPageProps) {
                       placeholder="Décrivez brièvement votre projet..."
                     />
                   </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="startDate">Date de début</Label>
+                      <Input
+                        id="startDate"
+                        type="date"
+                        value={newProject.startDate}
+                        onChange={(e) =>
+                          setNewProject({ ...newProject, startDate: e.target.value })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="endDate">Date de fin</Label>
+                      <Input
+                        id="endDate"
+                        type="date"
+                        value={newProject.endDate}
+                        onChange={(e) =>
+                          setNewProject({ ...newProject, endDate: e.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
                   <div>
                     <Label htmlFor="type">Type de projet</Label>
-                    <Select value={newProject.type} onValueChange={(value: any) => setNewProject({ ...newProject, type: value })}>
+                    <Select
+                      value={newProject.type}
+                      onValueChange={(value: any) =>
+                        setNewProject({ ...newProject, type: value })
+                      }
+                    >
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
@@ -237,6 +362,25 @@ export function ProjectsPage({ onSelectProject }: ProjectsPageProps) {
                         <SelectItem value="mobile">Mobile</SelectItem>
                         <SelectItem value="desktop">Desktop</SelectItem>
                         <SelectItem value="enterprise">Entreprise</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="status">Statut</Label>
+                    <Select
+                      value={newProject.status}
+                      onValueChange={(value: any) =>
+                        setNewProject({ ...newProject, status: value })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="brouillon">Brouillon</SelectItem>
+                        <SelectItem value="en_cours">En cours</SelectItem>
+                        <SelectItem value="termine">Terminé</SelectItem>
+                        <SelectItem value="archive">Archivé</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -256,18 +400,24 @@ export function ProjectsPage({ onSelectProject }: ProjectsPageProps) {
 
         {/* Projects Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredProjects.map((project) => {
+          {displayedProjects.map((project) => {
             const TypeIcon = typeIcons[project.type];
+            const badgeClass = statusColors[project.status] ?? 'bg-gray-100 text-gray-800';
+            const badgeLabel = statusLabels[project.status as keyof typeof statusLabels] ?? project.status;
             return (
               <Card 
                 key={project.id} 
                 className="group hover:shadow-lg transition-shadow cursor-pointer border-0 bg-white/60 backdrop-blur-sm"
-                onClick={() => handleSelectProject(project.id)}
+                onClick={() => void handleSelectProject(project.id)}
               >
                 <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
                   <div className="flex items-center space-x-2">
                     <div className="p-2 bg-gradient-to-r from-blue-100 to-purple-100 rounded-lg">
-                      <TypeIcon className="h-5 w-5 text-blue-600" />
+                      {TypeIcon ? (
+                        <TypeIcon className="h-5 w-5 text-blue-600" />
+                      ) : (
+                        <Monitor className="h-5 w-5 text-blue-600" />
+                      )}
                     </div>
                     <div>
                       <CardTitle className="text-lg font-semibold group-hover:text-blue-600 transition-colors">
@@ -290,7 +440,7 @@ export function ProjectsPage({ onSelectProject }: ProjectsPageProps) {
                         className="text-red-600"
                         onClick={(e) => {
                           e.stopPropagation();
-                          deleteProject(project.id);
+                          void deleteProject(project.id);
                         }}
                       >
                         <Trash2 className="mr-2 h-4 w-4" />
@@ -304,12 +454,14 @@ export function ProjectsPage({ onSelectProject }: ProjectsPageProps) {
                     {project.description}
                   </CardDescription>
                   <div className="flex items-center justify-between">
-                    <Badge className={statusColors[project.status]}>
-                      {statusLabels[project.status]}
+                    <Badge className={badgeClass}>
+                      {badgeLabel}
                     </Badge>
                     <div className="flex items-center text-sm text-gray-500">
                       <Calendar className="mr-1 h-3 w-3" />
-                      {new Date(project.updatedAt).toLocaleDateString('fr-FR')}
+                      {project.updatedAt
+                        ? new Date(project.updatedAt).toLocaleDateString('fr-FR')
+                        : ''}
                     </div>
                   </div>
                 </CardContent>
@@ -318,22 +470,37 @@ export function ProjectsPage({ onSelectProject }: ProjectsPageProps) {
           })}
         </div>
 
-        {filteredProjects.length === 0 && (
+        {(isRemoteLoading || remoteError || displayedProjects.length === 0) && (
           <div className="text-center py-12">
-            <div className="w-24 h-24 bg-gradient-to-r from-blue-100 to-purple-100 rounded-full flex items-center justify-center mx-auto mb-6">
-              <Search className="h-12 w-12 text-blue-600" />
-            </div>
-            <h3 className="text-lg font-medium text-gray-900 mb-2">Aucun projet trouvé</h3>
-            <p className="text-gray-600 mb-4">
-              {searchTerm || statusFilter !== 'all' || typeFilter !== 'all'
-                ? 'Aucun projet ne correspond à vos critères de recherche.'
-                : 'Vous n\'avez pas encore créé de projet.'}
-            </p>
-            {!searchTerm && statusFilter === 'all' && typeFilter === 'all' && (
-              <Button onClick={() => setIsCreateDialogOpen(true)}>
-                <Plus className="mr-2 h-4 w-4" />
-                Créer votre premier projet
-              </Button>
+            {isRemoteLoading ? (
+              <>
+                <div className="w-24 h-24 bg-gradient-to-r from-blue-100 to-purple-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <Loader2 className="h-12 w-12 text-blue-600 animate-spin" />
+                </div>
+                <h3 className="text-lg font-medium text-gray-900 mb-2">Chargement des projets...</h3>
+              </>
+            ) : (
+              <>
+                <div className="w-24 h-24 bg-gradient-to-r from-blue-100 to-purple-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <Search className="h-12 w-12 text-blue-600" />
+                </div>
+                <h3 className="text-lg font-medium text-gray-900 mb-2">
+                  {remoteError ? 'Erreur lors de la recherche' : 'Aucun projet trouvé'}
+                </h3>
+                <p className="text-gray-600 mb-4">
+                  {remoteError
+                    ? remoteError
+                    : hasActiveFilters
+                      ? 'Aucun projet ne correspond à vos critères de recherche.'
+                      : "Vous n'avez pas encore créé de projet."}
+                </p>
+                {!hasActiveFilters && (
+                  <Button onClick={() => setIsCreateDialogOpen(true)}>
+                    <Plus className="mr-2 h-4 w-4" />
+                    Créer votre premier projet
+                  </Button>
+                )}
+              </>
             )}
           </div>
         )}

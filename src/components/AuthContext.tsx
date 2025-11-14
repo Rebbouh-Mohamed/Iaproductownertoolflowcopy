@@ -1,21 +1,21 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-
-interface User {
-  id: string;
-  name: string;
-  email: string;
-  avatar?: string;
-}
-
-interface Project {
-  id: string;
-  name: string;
-  description: string;
-  createdAt: string;
-  updatedAt: string;
-  type: 'web' | 'mobile' | 'desktop' | 'enterprise';
-  status: 'draft' | 'in-progress' | 'completed' | 'archived';
-}
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  ReactNode
+} from 'react';
+import { authService, loadSession } from '../services/authService';
+import { projectService } from '../services/projectService';
+import type {
+  SignUpPayload,
+  User
+} from '../types/auth';
+import type {
+  Project,
+  ProjectCreatePayload,
+  ProjectUpdatePayload
+} from '../types/project';
 
 interface AuthContextType {
   user: User | null;
@@ -25,11 +25,12 @@ interface AuthContextType {
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
   loginWithGoogle: () => Promise<void>;
-  logout: () => void;
-  createProject: (project: Omit<Project, 'id' | 'createdAt' | 'updatedAt'>) => void;
-  selectProject: (projectId: string) => void;
-  updateProject: (projectId: string, updates: Partial<Project>) => void;
-  deleteProject: (projectId: string) => void;
+  signUp: (payload: SignUpPayload) => Promise<void>;
+  logout: () => Promise<void>;
+  createProject: (project: ProjectCreatePayload) => Promise<void>;
+  selectProject: (projectId: number | string) => Promise<void>;
+  updateProject: (projectId: number | string, updates: ProjectUpdatePayload) => Promise<void>;
+  deleteProject: (projectId: number | string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -42,37 +43,6 @@ export const useAuth = () => {
   return context;
 };
 
-// Mock data pour la démonstration
-const mockProjects: Project[] = [
-  {
-    id: '1',
-    name: 'Power BI Entreprise',
-    description: 'Plateforme de business intelligence pour l\'analyse de données d\'entreprise',
-    createdAt: '2024-12-15',
-    updatedAt: '2024-12-20',
-    type: 'enterprise',
-    status: 'in-progress'
-  },
-  {
-    id: '2',
-    name: 'Application Mobile E-commerce',
-    description: 'Application mobile pour la vente en ligne avec paiements intégrés',
-    createdAt: '2024-12-10',
-    updatedAt: '2024-12-18',
-    type: 'mobile',
-    status: 'draft'
-  },
-  {
-    id: '3',
-    name: 'Système de Gestion RH',
-    description: 'Plateforme web pour la gestion des ressources humaines',
-    createdAt: '2024-12-05',
-    updatedAt: '2024-12-16',
-    type: 'web',
-    status: 'completed'
-  }
-];
-
 interface AuthProviderProps {
   children: ReactNode;
 }
@@ -84,92 +54,128 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Simuler le chargement de l'authentification
-    const storedUser = localStorage.getItem('user');
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
-      setProjects(mockProjects);
-    }
-    setIsLoading(false);
+    let isMounted = true;
+
+    const initialize = async () => {
+      setIsLoading(true);
+
+      try {
+        const session = await loadSession();
+        if (!isMounted) {
+          return;
+        }
+
+        setUser(session.user);
+        setProjects(session.projects);
+        setCurrentProject(session.currentProject);
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    void initialize();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
+
+  const handleSessionUpdate = ({
+    user: nextUser,
+    projects: nextProjects,
+    currentProject: nextCurrentProject
+  }: {
+    user: User | null;
+    projects: Project[];
+    currentProject?: Project | null;
+  }) => {
+    setUser(nextUser);
+    setProjects(nextProjects);
+    if (typeof nextCurrentProject !== 'undefined') {
+      setCurrentProject(nextCurrentProject);
+    }
+  };
 
   const login = async (email: string, password: string) => {
     setIsLoading(true);
-    // Simuler l'authentification
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    const mockUser: User = {
-      id: '1',
-      name: 'John Doe',
-      email: email,
-      avatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face'
-    };
-    
-    setUser(mockUser);
-    setProjects(mockProjects);
-    localStorage.setItem('user', JSON.stringify(mockUser));
-    setIsLoading(false);
+    try {
+      const session = await authService.login({ email, password });
+      handleSessionUpdate(session);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const loginWithGoogle = async () => {
     setIsLoading(true);
-    // Simuler l'authentification Google
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    const mockUser: User = {
-      id: '1',
-      name: 'John Doe',
-      email: 'john.doe@gmail.com',
-      avatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face'
-    };
-    
-    setUser(mockUser);
-    setProjects(mockProjects);
-    localStorage.setItem('user', JSON.stringify(mockUser));
-    setIsLoading(false);
-  };
-
-  const logout = () => {
-    setUser(null);
-    setProjects([]);
-    setCurrentProject(null);
-    localStorage.removeItem('user');
-  };
-
-  const createProject = (projectData: Omit<Project, 'id' | 'createdAt' | 'updatedAt'>) => {
-    const newProject: Project = {
-      ...projectData,
-      id: Date.now().toString(),
-      createdAt: new Date().toISOString().split('T')[0],
-      updatedAt: new Date().toISOString().split('T')[0]
-    };
-    setProjects(prev => [...prev, newProject]);
-  };
-
-  const selectProject = (projectId: string) => {
-    const project = projects.find(p => p.id === projectId);
-    if (project) {
-      setCurrentProject(project);
+    try {
+      const session = await authService.loginWithGoogle();
+      handleSessionUpdate(session);
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const updateProject = (projectId: string, updates: Partial<Project>) => {
-    setProjects(prev => prev.map(p => 
-      p.id === projectId 
-        ? { ...p, ...updates, updatedAt: new Date().toISOString().split('T')[0] }
-        : p
-    ));
-    
-    if (currentProject?.id === projectId) {
-      setCurrentProject(prev => prev ? { ...prev, ...updates } : null);
+  const signUp = async (payload: SignUpPayload) => {
+    setIsLoading(true);
+    try {
+      const { user: createdUser, projects: nextProjects, currentProject: nextCurrentProject } =
+        await authService.signUp(payload);
+      handleSessionUpdate({
+        user: createdUser,
+        projects: nextProjects,
+        currentProject: nextCurrentProject ?? null
+      });
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const deleteProject = (projectId: string) => {
-    setProjects(prev => prev.filter(p => p.id !== projectId));
-    if (currentProject?.id === projectId) {
-      setCurrentProject(null);
+  const logout = async () => {
+    setIsLoading(true);
+    try {
+      await authService.logout();
+      handleSessionUpdate({
+        user: null,
+        projects: [],
+        currentProject: null
+      });
+    } finally {
+      setIsLoading(false);
     }
+  };
+
+  const createProject = async (projectData: ProjectCreatePayload) => {
+    const createdProject = await projectService.create(projectData);
+    const nextProjects = await projectService.list();
+    setProjects(nextProjects);
+    setCurrentProject(createdProject);
+  };
+
+  const selectProject = async (projectId: number | string) => {
+    const selectedProject = await projectService.select(projectId);
+    setCurrentProject(selectedProject);
+  };
+
+  const updateProject = async (projectId: number | string, updates: ProjectUpdatePayload) => {
+    const updatedProject = await projectService.update(projectId, updates);
+    setProjects(prev =>
+      prev.map(project => (project.id === updatedProject.id ? updatedProject : project))
+    );
+
+    if (currentProject?.id === updatedProject.id) {
+      setCurrentProject(updatedProject);
+    }
+  };
+
+  const deleteProject = async (projectId: number | string) => {
+    await projectService.delete(projectId);
+    const nextProjects = await projectService.list();
+    setProjects(nextProjects);
+    const updatedCurrentProject = await projectService.getCurrentProject();
+    setCurrentProject(updatedCurrentProject);
   };
 
   const value: AuthContextType = {
@@ -180,6 +186,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     isLoading,
     login,
     loginWithGoogle,
+    signUp,
     logout,
     createProject,
     selectProject,

@@ -2,35 +2,56 @@ import React, { useState } from 'react';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle
+} from '../ui/card';
 import { Separator } from '../ui/separator';
 import { useAuth } from '../AuthContext';
 import { Mail, Lock, Eye, EyeOff, Loader2 } from 'lucide-react';
 
-export function LoginPage() {
+interface LoginPageProps {
+  onNavigateToSignUp?: () => void;
+}
+
+export function LoginPage({ onNavigateToSignUp }: LoginPageProps) {
   const { login, loginWithGoogle, isLoading } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoginLoading, setIsLoginLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage(null);
     setIsLoginLoading(true);
     try {
       await login(email, password);
     } catch (error) {
       console.error('Erreur de connexion:', error);
+      setErrorMessage(
+        error instanceof Error ? error.message : 'Une erreur est survenue lors de la connexion.'
+      );
     } finally {
       setIsLoginLoading(false);
     }
   };
 
   const handleGoogleLogin = async () => {
+    setErrorMessage(null);
     try {
       await loginWithGoogle();
     } catch (error) {
       console.error('Erreur de connexion Google:', error);
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : 'La connexion Google n’est pas disponible pour le moment.'
+      );
     }
   };
 
@@ -164,9 +185,19 @@ export function LoginPage() {
               )}
             </Button>
 
+            {errorMessage && (
+              <div className="rounded-md bg-red-50 border border-red-100 text-red-600 text-sm px-3 py-2">
+                {errorMessage}
+              </div>
+            )}
+
             <div className="text-center text-sm text-gray-600">
               <p>Première visite ?</p>
-              <Button variant="link" className="h-auto p-0 text-blue-600">
+              <Button
+                variant="link"
+                className="h-auto p-0 text-blue-600"
+                onClick={() => onNavigateToSignUp?.()}
+              >
                 Créer un compte
               </Button>
             </div>

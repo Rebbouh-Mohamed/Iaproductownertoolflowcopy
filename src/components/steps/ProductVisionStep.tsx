@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { Label } from '../ui/label';
 import { Textarea } from '../ui/textarea';
@@ -6,23 +6,183 @@ import { Input } from '../ui/input';
 import { Button } from '../ui/button';
 import { useProject, ProductVision } from '../ProjectContext';
 import { AIButton, AIReformulationService } from '../AIButton';
-import { Lightbulb, Save, Wand2, Plus, X } from 'lucide-react';
+import { Lightbulb, Save, Wand2, Plus, X, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { useAuth } from '../AuthContext';
+import { projectService } from '../../services/projectService';
+import type { ProductVisionApiResponse, ProductVisionUpdatePayload } from '../../types/project';
+
+const DEFAULT_VISION_QUESTIONS = {
+  problem: 'Quel problème ce produit résout-il ?',
+  persona: 'Pour quel utilisateur / persona ?',
+  benefit: 'Quel bénéfice principal ?',
+  kpis: 'Quels KPIs ou critères de succès ?',
+  constraints: 'Quelles contraintes / limites à respecter ?'
+} as const;
+
+const DEFAULT_VISION_QUESTIONS_SET = new Set(Object.values(DEFAULT_VISION_QUESTIONS));
+
+function normalizeQuestionId(question: string) {
+  const normalized = question.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  return `api-${normalized || `custom-${Date.now()}`}`;
+}
+
+function mapVisionFromApi(
+  apiVision: ProductVisionApiResponse | null,
+  previousCustomQuestions: ProductVision['customQuestions']
+): ProductVision {
+  const questionsAnswers = apiVision?.questions_answers ?? {};
+
+  const customQuestions = Object.entries(questionsAnswers)
+    .filter(([question]) => !DEFAULT_VISION_QUESTIONS_SET.has(question))
+    .map(([question, answer]) => {
+      const existing = previousCustomQuestions.find(
+        q => q.question.trim().toLowerCase() === question.trim().toLowerCase()
+      );
+      return {
+        id: existing?.id ?? normalizeQuestionId(question),
+        question,
+        answer: answer ?? ''
+      };
+    });
+
+  return {
+    problem: questionsAnswers[DEFAULT_VISION_QUESTIONS.problem] ?? '',
+    persona: questionsAnswers[DEFAULT_VISION_QUESTIONS.persona] ?? '',
+    benefit: questionsAnswers[DEFAULT_VISION_QUESTIONS.benefit] ?? '',
+    kpis: questionsAnswers[DEFAULT_VISION_QUESTIONS.kpis] ?? '',
+    constraints: questionsAnswers[DEFAULT_VISION_QUESTIONS.constraints] ?? '',
+    customQuestions
+  };
+}
+
+function buildVisionPayload(vision: ProductVision): ProductVisionUpdatePayload {
+  const questions: Record<string, string> = {
+    [DEFAULT_VISION_QUESTIONS.problem]: vision.problem ?? '',
+    [DEFAULT_VISION_QUESTIONS.persona]: vision.persona ?? '',
+    [DEFAULT_VISION_QUESTIONS.benefit]: vision.benefit ?? '',
+    [DEFAULT_VISION_QUESTIONS.kpis]: vision.kpis ?? '',
+    [DEFAULT_VISION_QUESTIONS.constraints]: vision.constraints ?? ''
+  };
+
+  vision.customQuestions.forEach(question => {
+    if (question.question.trim()) {
+      questions[question.question] = question.answer ?? '';
+    }
+  });
+
+  return {
+    questions_answers: questions
+  };
+}
 
 export function ProductVisionStep() {
   const { state, dispatch } = useProject();
+  const { currentProject } = useAuth();
   const [formData, setFormData] = useState<ProductVision>(state.productVision);
   const [newQuestionText, setNewQuestionText] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [hasChanges, setHasChanges] = useState(false);
+  const previousStepRef = useRef(state.currentStep);
 
   useEffect(() => {
     setFormData(state.productVision);
   }, [state.productVision]);
 
+  useEffect(() => {
+    const prevStep = previousStepRef.current;
+    if (prevStep === 1 && state.currentStep !== 1 && hasChanges) {
+      void saveVision();
+    }
+    previousStepRef.current = state.currentStep;
+  }, [state.currentStep]);
+
+  useEffect(() => {
+    if (!currentProject) {
+      return;
+    }
+
+    let isMounted = true;
+    const loadVision = async () => {
+      setIsLoading(true);
+      setError(null);
+      setSaveMessage(null);
+
+      try {
+        const response = await projectService.getProductVision(currentProject.id);
+        if (!isMounted) {
+          return;
+        }
+
+        const mappedVision = mapVisionFromApi(response, state.productVision.customQuestions);
+        dispatch({ type: 'SET_PRODUCT_VISION', payload: mappedVision });
+        setFormData(mappedVision);
+        setHasChanges(false);
+      } catch (fetchError) {
+        console.error('Erreur lors du chargement de la product vision:', fetchError);
+        if (isMounted) {
+          setError(
+            fetchError instanceof Error
+              ? fetchError.message
+              : 'Impossible de charger la product vision pour ce projet.'
+          );
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    void loadVision();
+
+    return () => {
+      isMounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentProject?.id]);
+
   const handleChange = (field: keyof ProductVision, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+    setHasChanges(true);
+    setSaveMessage(null);
   };
 
-  const saveVision = () => {
-    dispatch({ type: 'SET_PRODUCT_VISION', payload: formData });
+  const saveVision = async () => {
+    if (!currentProject || isSaving) {
+      return;
+    }
+
+    const visionToSave: ProductVision = {
+      ...formData,
+      customQuestions: state.productVision.customQuestions
+    };
+
+    const payload = buildVisionPayload(visionToSave);
+
+    setIsSaving(true);
+    setError(null);
+    setSaveMessage(null);
+
+    try {
+      const updated = await projectService.updateProductVision(currentProject.id, payload);
+      const normalized = mapVisionFromApi(updated, visionToSave.customQuestions);
+      dispatch({ type: 'SET_PRODUCT_VISION', payload: normalized });
+      setFormData(normalized);
+      setHasChanges(false);
+      setSaveMessage('Product vision sauvegardée avec succès.');
+    } catch (saveError) {
+      console.error('Erreur lors de la sauvegarde de la product vision:', saveError);
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : 'Une erreur est survenue lors de la sauvegarde. Veuillez réessayer.'
+      );
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const addCustomQuestion = () => {
@@ -36,6 +196,8 @@ export function ProductVisionStep() {
     
     dispatch({ type: 'ADD_PRODUCT_VISION_CUSTOM_QUESTION', payload: newQuestion });
     setNewQuestionText('');
+    setHasChanges(true);
+    setSaveMessage(null);
   };
 
   const updateCustomQuestion = (id: string, field: 'question' | 'answer', value: string) => {
@@ -43,10 +205,14 @@ export function ProductVisionStep() {
       type: 'UPDATE_PRODUCT_VISION_CUSTOM_QUESTION', 
       payload: { id, [field]: value } 
     });
+    setHasChanges(true);
+    setSaveMessage(null);
   };
 
   const deleteCustomQuestion = (id: string) => {
     dispatch({ type: 'DELETE_PRODUCT_VISION_CUSTOM_QUESTION', payload: id });
+    setHasChanges(true);
+    setSaveMessage(null);
   };
 
   const generateSuggestions = () => {
@@ -61,7 +227,29 @@ export function ProductVisionStep() {
     };
     
     setFormData(suggestions);
+    setHasChanges(true);
+    setSaveMessage(null);
   };
+
+  const isSaveDisabled = useMemo(
+    () => !currentProject || isSaving || isLoading || !hasChanges,
+    [currentProject, isSaving, isLoading, hasChanges]
+  );
+
+  if (!currentProject) {
+    return (
+      <div className="max-w-3xl mx-auto p-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Sélectionnez un projet</CardTitle>
+            <CardDescription>
+              Choisissez un projet dans la liste pour commencer à définir sa product vision.
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-6">
@@ -83,6 +271,20 @@ export function ProductVisionStep() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
+          {isLoading && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Chargement de la product vision...
+            </div>
+          )}
+
+          {error && (
+            <div className="flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              <AlertCircle className="h-4 w-4" />
+              {error}
+            </div>
+          )}
+
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label htmlFor="problem">Quel problème ce produit résout-il ?</Label>
@@ -254,11 +456,31 @@ export function ProductVisionStep() {
               <Wand2 className="w-4 h-4" />
               Générer des suggestions IA
             </Button>
-            <Button onClick={saveVision} className="flex items-center gap-2">
-              <Save className="w-4 h-4" />
-              Sauvegarder la vision
+            <Button
+              onClick={() => void saveVision()}
+              className="flex items-center gap-2"
+              disabled={isSaveDisabled}
+            >
+              {isSaving ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Sauvegarde...
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4" />
+                  Sauvegarder la vision
+                </>
+              )}
             </Button>
           </div>
+
+          {saveMessage && (
+            <div className="flex items-center gap-2 text-sm text-green-600">
+              <CheckCircle2 className="h-4 w-4" />
+              {saveMessage}
+            </div>
+          )}
         </CardContent>
       </Card>
 

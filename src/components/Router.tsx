@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { useAuth } from './AuthContext';
 import { LoginPage } from './pages/LoginPage';
+import { SignUpPage } from './pages/SignUpPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 
-export type Page = 'login' | 'projects' | 'project-builder';
+export type Page = 'auth' | 'projects' | 'project-builder';
 
 interface RouterProps {
   children: React.ReactNode;
@@ -11,12 +12,14 @@ interface RouterProps {
 
 export function Router({ children }: RouterProps) {
   const { isAuthenticated, currentProject } = useAuth();
-  const [currentPage, setCurrentPage] = useState<Page>('login');
+  const [currentPage, setCurrentPage] = useState<Page>('auth');
+  const [authView, setAuthView] = useState<'login' | 'signup'>('login');
 
   // Gestion de la navigation automatique
   React.useEffect(() => {
     if (!isAuthenticated) {
-      setCurrentPage('login');
+      setCurrentPage('auth');
+      setAuthView('login');
     } else if (!currentProject) {
       setCurrentPage('projects');
     } else {
@@ -34,9 +37,13 @@ export function Router({ children }: RouterProps) {
 
   // Rendu conditionnel basé sur la page actuelle
   switch (currentPage) {
-    case 'login':
-      return <LoginPage />;
-    
+    case 'auth':
+      return authView === 'signup' ? (
+        <SignUpPage onNavigateToLogin={() => setAuthView('login')} />
+      ) : (
+        <LoginPage onNavigateToSignUp={() => setAuthView('signup')} />
+      );
+
     case 'projects':
       return <ProjectsPage onSelectProject={handleSelectProject} />;
     
@@ -55,6 +62,6 @@ export function Router({ children }: RouterProps) {
       );
     
     default:
-      return <LoginPage />;
+      return <LoginPage onNavigateToSignUp={() => setAuthView('signup')} />;
   }
 }
