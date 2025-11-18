@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useReducer, ReactNode } from 'react';
+import type { ProjectFeature } from '../types/project';
 
 export interface CustomQuestion {
   id: string;
@@ -22,16 +23,6 @@ export interface ProjectDescription {
   constraints: string;
   criticalPoints: string;
   customQuestions: CustomQuestion[];
-}
-
-export interface Feature {
-  id: string;
-  name: string;
-  description: string;
-  selected: boolean;
-  custom: boolean;
-  priority?: 'high' | 'medium' | 'low';
-  category?: string;
 }
 
 export interface UserStory {
@@ -111,7 +102,7 @@ export interface ProjectState {
   currentStep: number;
   productVision: ProductVision;
   projectDescription: ProjectDescription;
-  features: Feature[];
+  features: ProjectFeature[];
   userStories: UserStory[];
   testCases: TestCase[];
   epics: Epic[];
@@ -141,10 +132,10 @@ type ProjectAction =
   | { type: 'ADD_PROJECT_DESCRIPTION_CUSTOM_QUESTION'; payload: CustomQuestion }
   | { type: 'UPDATE_PROJECT_DESCRIPTION_CUSTOM_QUESTION'; payload: { id: string; question?: string; answer?: string } }
   | { type: 'DELETE_PROJECT_DESCRIPTION_CUSTOM_QUESTION'; payload: string }
-  | { type: 'SET_FEATURES'; payload: Feature[] }
-  | { type: 'ADD_FEATURE'; payload: Feature }
+  | { type: 'SET_FEATURES'; payload: ProjectFeature[] }
+  | { type: 'ADD_FEATURE'; payload: ProjectFeature }
   | { type: 'TOGGLE_FEATURE'; payload: string }
-  | { type: 'UPDATE_FEATURE'; payload: { id: string; feature: Partial<Feature> } }
+  | { type: 'UPDATE_FEATURE'; payload: { id: string; feature: Partial<ProjectFeature> } }
   | { type: 'SET_USER_STORIES'; payload: UserStory[] }
   | { type: 'UPDATE_USER_STORIES'; payload: any[] }
   | { type: 'UPDATE_USER_STORY'; payload: { id: string; story: Partial<UserStory> } }

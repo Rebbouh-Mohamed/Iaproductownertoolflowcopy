@@ -7,19 +7,31 @@ import type {
   ProjectCreatePayload,
   ProjectDescriptionApiResponse,
   ProjectDescriptionUpdatePayload,
+  ProjectFeature,
+  ProjectFeatureApiModel,
+  ProjectFeatureCreatePayload,
+  ProjectFeatureUpdatePayload,
   ProjectListFilters,
+  ProjectType,
+  ProjectTypeCreatePayload,
   ProjectUpdatePayload
 } from '../types/project';
 
 const PROJECTS_BASE_PATH = '/api/projects/';
+const PROJECT_TYPES_BASE_PATH = '/api/projects/types/';
 const CURRENT_PROJECT_STORAGE_KEY = 'prodigy:current-project';
+
+interface ProjectTypeApiModel {
+  id: number;
+  name: string;
+}
 
 interface ProjectApiModel {
   id: number;
   name: string;
   description: string;
   status: string;
-  project_type: string;
+  project_type: ProjectTypeApiModel;
   start_date?: string | null;
   end_date?: string | null;
   created_at: string;
@@ -70,7 +82,10 @@ function mapProjectFromApi(apiProject: ProjectApiModel): Project {
     id: apiProject.id,
     name: apiProject.name,
     description: apiProject.description ?? '',
-    type: apiProject.project_type as Project['type'],
+    projectType: {
+      id: apiProject.project_type?.id ?? 0,
+      name: apiProject.project_type?.name ?? 'Inconnu'
+    },
     status: apiProject.status as Project['status'],
     startDate: apiProject.start_date ?? null,
     endDate: apiProject.end_date ?? null,
@@ -96,8 +111,10 @@ function mapProjectToApiPayload(payload: ProjectCreatePayload | ProjectUpdatePay
 
   if (payload.name !== undefined) body.name = payload.name;
   if (payload.description !== undefined) body.description = payload.description;
-  if (payload.type !== undefined) body.project_type = payload.type;
   if (payload.status !== undefined) body.status = payload.status;
+  if ('projectTypeId' in payload && payload.projectTypeId !== undefined) {
+    body.project_type_id = payload.projectTypeId;
+  }
   if ('startDate' in payload) {
     const normalizedStart = normalizeDateValue(payload.startDate);
     if (normalizedStart !== undefined) {
@@ -114,20 +131,37 @@ function mapProjectToApiPayload(payload: ProjectCreatePayload | ProjectUpdatePay
   return body;
 }
 
-function buildProjectsQuery(filters?: ProjectListFilters): string {
-  if (!filters) {
-    return '';
+function mapFeatureFromApi(apiFeature: ProjectFeatureApiModel): ProjectFeature {
+  return {
+    id: String(apiFeature.id),
+    name: apiFeature.title,
+    description: apiFeature.description ?? '',
+    category: apiFeature.category ?? undefined,
+    selected: apiFeature.selected,
+    custom: !apiFeature.is_predefined,
+    isPredefined: apiFeature.is_predefined,
+    source: apiFeature.source,
+    preFeatureId: apiFeature.pre_feature_id ?? undefined
+  };
+}
+
+function mapFeatureToApiPayload(
+  payload: ProjectFeatureCreatePayload | ProjectFeatureUpdatePayload
+) {
+  const body: Record<string, unknown> = {};
+
+  if (payload.title !== undefined) body.title = payload.title;
+  if (payload.description !== undefined) body.description = payload.description;
+  if (payload.category !== undefined) body.category = payload.category;
+  if (payload.source !== undefined) body.source = payload.source;
+  if ('preFeatureId' in payload && payload.preFeatureId !== undefined) {
+    body.pre_feature_id = payload.preFeatureId;
+  }
+  if ('selected' in payload && payload.selected !== undefined) {
+    body.selected = payload.selected;
   }
 
-  const params = new URLSearchParams();
-
-  if (filters.search) params.set('search', filters.search);
-  if (filters.status) params.set('status', filters.status);
-  if (filters.projectType) params.set('project_type', filters.projectType);
-  if (filters.ordering) params.set('ordering', filters.ordering);
-
-  const queryString = params.toString();
-  return queryString ? `?${queryString}` : '';
+  return body;
 }
 
 function getAuthConfig() {
@@ -139,9 +173,8 @@ function getAuthConfig() {
 }
 
 export const projectService = {
-  async list(filters?: ProjectListFilters): Promise<Project[]> {
-    const query = buildProjectsQuery(filters);
-    const projects = await apiClient.get<ProjectApiModel[]>(`${PROJECTS_BASE_PATH}${query}`, getAuthConfig());
+  async list(_filters?: ProjectListFilters): Promise<Project[]> {
+    const projects = await apiClient.get<ProjectApiModel[]>(PROJECTS_BASE_PATH, getAuthConfig());
     return projects.map(mapProjectFromApi);
   },
 
@@ -260,5 +293,95 @@ export const projectService = {
       payload,
       getAuthConfig()
     );
+  },
+
+  async listFeatures(projectId: number | string): Promise<ProjectFeature[]> {
+    const id = ensureProjectId(projectId);
+    const features = await apiClient.get<ProjectFeatureApiModel[]>(
+      `${PROJECTS_BASE_PATH}${id}/features/`,
+      getAuthConfig()
+    );
+    return features.map(mapFeatureFromApi);
+  },
+
+  async createFeature(
+    projectId: number | string,
+    payload: ProjectFeatureCreatePayload
+  ): Promise<ProjectFeature> {
+    const id = ensureProjectId(projectId);
+    const body = mapFeatureToApiPayload(payload);
+    const feature = await apiClient.post<ProjectFeatureApiModel, typeof body>(
+      `${PROJECTS_BASE_PATH}${id}/features/`,
+      body,
+      getAuthConfig()
+    );
+    return mapFeatureFromApi(feature);
+  },
+
+  async updateFeature(
+    projectId: number | string,
+    featureId: number | string,
+    payload: ProjectFeatureUpdatePayload
+  ): Promise<ProjectFeature> {
+    const projId = ensureProjectId(projectId);
+    const featId = ensureProjectId(featureId);
+    const body = mapFeatureToApiPayload(payload);
+    const feature = await apiClient.put<ProjectFeatureApiModel, typeof body>(
+      `${PROJECTS_BASE_PATH}${projId}/features/${featId}/`,
+      body,
+      getAuthConfig()
+    );
+    return mapFeatureFromApi(feature);
+  },
+
+  async deleteFeature(projectId: number | string, featureId: number | string): Promise<void> {
+    const projId = ensureProjectId(projectId);
+    const featId = ensureProjectId(featureId);
+    await apiClient.delete(
+      `${PROJECTS_BASE_PATH}${projId}/features/${featId}/`,
+      getAuthConfig()
+    );
+  },
+
+  async listProjectTypes(): Promise<ProjectType[]> {
+    const types = await apiClient.get<ProjectTypeApiModel[]>(
+      PROJECT_TYPES_BASE_PATH,
+      getAuthConfig()
+    );
+    return types.map(type => ({
+      id: type.id,
+      name: type.name
+    }));
+  },
+
+  async createProjectType(payload: ProjectTypeCreatePayload): Promise<ProjectType> {
+    const type = await apiClient.post<ProjectTypeApiModel, ProjectTypeCreatePayload>(
+      PROJECT_TYPES_BASE_PATH,
+      payload,
+      getAuthConfig()
+    );
+    return {
+      id: type.id,
+      name: type.name
+    };
+  },
+
+  async updateProjectType(
+    projectTypeId: number,
+    payload: ProjectTypeCreatePayload
+  ): Promise<ProjectType> {
+    const updated = await apiClient.put<ProjectTypeApiModel, ProjectTypeCreatePayload>(
+      `${PROJECT_TYPES_BASE_PATH}${projectTypeId}/`,
+      payload,
+      getAuthConfig()
+    );
+    return {
+      id: updated.id,
+      name: updated.name
+    };
+  },
+
+  async deleteProjectType(projectTypeId: number): Promise<void> {
+    await apiClient.delete(`${PROJECT_TYPES_BASE_PATH}${projectTypeId}/`, getAuthConfig());
   }
 };

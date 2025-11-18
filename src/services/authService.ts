@@ -165,7 +165,6 @@ async function authenticate(
 export const authService = {
   async signUp(payload: SignUpPayload) {
     const { email, password1, password2, username } = payload;
-    console.log("payload:", payload);
     const response = await apiClient.post<AuthApiResponse, Record<string, unknown>>(
       `${AUTH_BASE_PATH}/register/`,
       {
