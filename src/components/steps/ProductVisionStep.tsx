@@ -9,6 +9,7 @@ import { AIButton, AIReformulationService } from '../AIButton';
 import { Lightbulb, Save, Wand2, Plus, X, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../AuthContext';
 import { projectService } from '../../services/projectService';
+import { iaService } from '../../services/iaService';
 import type { ProductVisionApiResponse, ProductVisionUpdatePayload } from '../../types/project';
 
 const DEFAULT_VISION_QUESTIONS = {
@@ -187,13 +188,13 @@ export function ProductVisionStep() {
 
   const addCustomQuestion = () => {
     if (!newQuestionText.trim()) return;
-    
+
     const newQuestion = {
       id: `custom-${Date.now()}`,
       question: newQuestionText,
       answer: ''
     };
-    
+
     dispatch({ type: 'ADD_PRODUCT_VISION_CUSTOM_QUESTION', payload: newQuestion });
     setNewQuestionText('');
     setHasChanges(true);
@@ -201,9 +202,9 @@ export function ProductVisionStep() {
   };
 
   const updateCustomQuestion = (id: string, field: 'question' | 'answer', value: string) => {
-    dispatch({ 
-      type: 'UPDATE_PRODUCT_VISION_CUSTOM_QUESTION', 
-      payload: { id, [field]: value } 
+    dispatch({
+      type: 'UPDATE_PRODUCT_VISION_CUSTOM_QUESTION',
+      payload: { id, [field]: value }
     });
     setHasChanges(true);
     setSaveMessage(null);
@@ -215,20 +216,67 @@ export function ProductVisionStep() {
     setSaveMessage(null);
   };
 
-  const generateSuggestions = () => {
-    // Simulation de génération par IA
-    const suggestions: ProductVision = {
-      problem: "Les équipes produit perdent du temps à créer manuellement la documentation projet et manquent de structure dans leur processus de définition produit.",
-      persona: "Product Owners et Product Managers travaillant dans des équipes agiles, ayant besoin d'outils pour structurer leur réflexion produit.",
-      benefit: "Réduction de 70% du temps de création de documentation produit et amélioration de la cohérence des livrables.",
-      kpis: "- Temps de création d'un backlog divisé par 3\n- Taux d'adoption de l'outil > 80%\n- Satisfaction utilisateur > 4.5/5",
-      constraints: "- Intégration avec les outils existants (Jira, Notion)\n- Interface intuitive pour utilisateurs non-techniques\n- Export dans formats standards",
-      customQuestions: formData.customQuestions
-    };
-    
-    setFormData(suggestions);
-    setHasChanges(true);
+  const generateSuggestions = async () => {
+    if (!currentProject) return;
+
+    setIsLoading(true);
     setSaveMessage(null);
+    setError(null);
+
+    try {
+      // Define questions for each field
+      const questions = [
+        { field: 'problem', question: DEFAULT_VISION_QUESTIONS.problem },
+        { field: 'persona', question: DEFAULT_VISION_QUESTIONS.persona },
+        { field: 'benefit', question: DEFAULT_VISION_QUESTIONS.benefit },
+        { field: 'kpis', question: DEFAULT_VISION_QUESTIONS.kpis },
+        { field: 'constraints', question: DEFAULT_VISION_QUESTIONS.constraints }
+      ];
+
+      // Launch all requests in parallel
+      const results = await Promise.all(
+        questions.map(async ({ field, question }) => {
+          try {
+            const answer = await iaService.suggest(
+              currentProject.id,
+              question,
+              'general',
+              'concise'
+            );
+            return { field, answer };
+          } catch (e) {
+            console.error(`Failed to generate suggestion for ${field}`, e);
+            return { field, answer: '' };
+          }
+        })
+      );
+
+      // Update state with results
+      const newFormData = { ...formData };
+      let changed = false;
+
+      results.forEach(({ field, answer }) => {
+        if (answer) {
+          // @ts-ignore
+          newFormData[field] = answer;
+          changed = true;
+        }
+      });
+
+      if (changed) {
+        setFormData(newFormData);
+        setHasChanges(true);
+        setSaveMessage('Suggestions générées avec succès.');
+      } else {
+        setError('Impossible de générer des suggestions pour le moment.');
+      }
+
+    } catch (err) {
+      console.error('Error generating suggestions:', err);
+      setError('Une erreur est survenue lors de la génération des suggestions.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const isSaveDisabled = useMemo(
@@ -289,7 +337,15 @@ export function ProductVisionStep() {
             <div className="flex items-center justify-between">
               <Label htmlFor="problem">Quel problème ce produit résout-il ?</Label>
               <AIButton
-                onReformulate={AIReformulationService.reformulateText}
+                onReformulate={async (text) => {
+                  if (!currentProject) return text;
+                  return iaService.suggest(
+                    currentProject.id,
+                    `Reformule cette description de manière plus professionnelle et claire : "${text}"`,
+                    'general',
+                    'concise'
+                  );
+                }}
                 currentText={formData.problem}
                 onTextUpdate={(text) => handleChange('problem', text)}
                 tooltip="Reformuler la description du problème avec l'IA"
@@ -308,7 +364,15 @@ export function ProductVisionStep() {
             <div className="flex items-center justify-between">
               <Label htmlFor="persona">Pour quel utilisateur / persona ?</Label>
               <AIButton
-                onReformulate={AIReformulationService.reformulateText}
+                onReformulate={async (text) => {
+                  if (!currentProject) return text;
+                  return iaService.suggest(
+                    currentProject.id,
+                    `Reformule cette description de persona de manière plus professionnelle : "${text}"`,
+                    'general',
+                    'concise'
+                  );
+                }}
                 currentText={formData.persona}
                 onTextUpdate={(text) => handleChange('persona', text)}
                 tooltip="Reformuler la description du persona avec l'IA"
@@ -327,7 +391,15 @@ export function ProductVisionStep() {
             <div className="flex items-center justify-between">
               <Label htmlFor="benefit">Quel bénéfice principal ?</Label>
               <AIButton
-                onReformulate={AIReformulationService.reformulateText}
+                onReformulate={async (text) => {
+                  if (!currentProject) return text;
+                  return iaService.suggest(
+                    currentProject.id,
+                    `Reformule ce bénéfice produit de manière plus percutante : "${text}"`,
+                    'general',
+                    'concise'
+                  );
+                }}
                 currentText={formData.benefit}
                 onTextUpdate={(text) => handleChange('benefit', text)}
                 tooltip="Reformuler la description du bénéfice avec l'IA"
@@ -346,7 +418,15 @@ export function ProductVisionStep() {
             <div className="flex items-center justify-between">
               <Label htmlFor="kpis">Quels KPIs ou critères de succès ?</Label>
               <AIButton
-                onReformulate={AIReformulationService.reformulateText}
+                onReformulate={async (text) => {
+                  if (!currentProject) return text;
+                  return iaService.suggest(
+                    currentProject.id,
+                    `Reformule ces KPIs de manière plus mesurable et professionnelle : "${text}"`,
+                    'general',
+                    'concise'
+                  );
+                }}
                 currentText={formData.kpis}
                 onTextUpdate={(text) => handleChange('kpis', text)}
                 tooltip="Reformuler les KPIs avec l'IA"
@@ -365,7 +445,15 @@ export function ProductVisionStep() {
             <div className="flex items-center justify-between">
               <Label htmlFor="constraints">Quelles contraintes / limites à respecter ?</Label>
               <AIButton
-                onReformulate={AIReformulationService.reformulateText}
+                onReformulate={async (text) => {
+                  if (!currentProject) return text;
+                  return iaService.suggest(
+                    currentProject.id,
+                    `Reformule ces contraintes de manière plus claire : "${text}"`,
+                    'general',
+                    'concise'
+                  );
+                }}
                 currentText={formData.constraints}
                 onTextUpdate={(text) => handleChange('constraints', text)}
                 tooltip="Reformuler les contraintes avec l'IA"
@@ -409,7 +497,15 @@ export function ProductVisionStep() {
                     <div className="flex items-center justify-between">
                       <Label htmlFor={`custom-a-${customQ.id}`}>Réponse</Label>
                       <AIButton
-                        onReformulate={AIReformulationService.reformulateText}
+                        onReformulate={async (text) => {
+                          if (!currentProject) return text;
+                          return iaService.suggest(
+                            currentProject.id,
+                            `Reformule cette réponse de manière plus professionnelle : "${text}"`,
+                            'general',
+                            'concise'
+                          );
+                        }}
                         currentText={customQ.answer}
                         onTextUpdate={(text) => updateCustomQuestion(customQ.id, 'answer', text)}
                         tooltip="Reformuler la réponse avec l'IA"
